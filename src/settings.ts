@@ -1,5 +1,4 @@
-import { PluginSettingTab, App, Setting } from "obsidian";
-import { Notice } from "obsidian";
+import { PluginSettingTab, App, Setting, Notice } from "obsidian";
 import WechatPlugin from "./main";
 
 export interface WeChatPluginSettings {
@@ -260,7 +259,7 @@ export class WechatPluginSettingTab extends PluginSettingTab {
           .addOption("full", "完整预览（上传图片）")
           .setValue(this.plugin.settings.previewMode)
           .onChange(async (value) => {
-            this.plugin.settings.previewMode = value;
+            this.plugin.settings.previewMode = value as 'quick' | 'full';
             await this.plugin.saveSettings();
           }),
       );

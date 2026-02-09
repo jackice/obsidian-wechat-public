@@ -8,26 +8,34 @@
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
-		"lint": "eslint ."
+		"lint": "eslint .",
+		"test": "vitest",
+		"test:ui": "vitest --ui"
 	},
-	"keywords": ["obsidian", "wechat", "weixin"],
+	"keywords": [
+		"obsidian",
+		"wechat",
+		"weixin"
+	],
 	"license": "MIT",
 	"devDependencies": {
+		"@eslint/js": "9.30.1",
 		"@types/node": "^16.11.6",
+		"@vitest/ui": "^4.0.18",
 		"esbuild": "0.25.5",
 		"eslint-plugin-obsidianmd": "0.1.9",
 		"globals": "14.0.0",
+		"jiti": "2.6.1",
 		"tslib": "2.4.0",
 		"typescript": "^5.8.3",
 		"typescript-eslint": "8.35.1",
-		"@eslint/js": "9.30.1",
-		"jiti": "2.6.1"
+		"vitest": "^4.0.18"
 	},
 	"dependencies": {
-		"obsidian": "latest",
-		"markdown-it": "^14.0.0",
-		"juice": "^10.0.0",
 		"browser-image-compression": "^2.0.2",
+		"juice": "^10.0.0",
+		"markdown-it": "^14.0.0",
+		"obsidian": "latest",
 		"pica": "^9.0.0"
 	}
 }
