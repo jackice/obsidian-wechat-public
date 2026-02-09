@@ -48,9 +48,9 @@ export class WechatPluginSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "微信公众号配置" });
+    new Setting(containerEl).setName("微信公众号配置").setHeading();
 
-    containerEl.createEl("h3", { text: "IP 白名单" });
+    new Setting(containerEl).setName("IP 白名单").setHeading();
     containerEl.createEl("p", {
       text: "请确保你的电脑 IP 已加入公众号后台的白名单中。",
     });
@@ -106,7 +106,7 @@ export class WechatPluginSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "微信 API 凭证" });
+    new Setting(containerEl).setName("微信 API 凭证").setHeading();
 
     new Setting(containerEl)
       .setName("AppID")
@@ -134,7 +134,7 @@ export class WechatPluginSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "样式配置" });
+    new Setting(containerEl).setName("样式配置").setHeading();
 
     new Setting(containerEl)
       .setName("预设主题")
@@ -167,7 +167,7 @@ export class WechatPluginSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "封面图配置" });
+    new Setting(containerEl).setName("封面图配置").setHeading();
 
     new Setting(containerEl)
       .setName("默认封面 Media ID")
@@ -195,7 +195,7 @@ export class WechatPluginSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "图片处理" });
+    new Setting(containerEl).setName("图片处理").setHeading();
 
     new Setting(containerEl)
       .setName("启用图片压缩")
@@ -239,7 +239,7 @@ export class WechatPluginSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "预览设置" });
+    new Setting(containerEl).setName("预览设置").setHeading();
 
     new Setting(containerEl)
       .setName("启用预览")
