@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "obsidian-wechat-public",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Publish Obsidian notes to WeChat Official Account drafts.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
@@ -10,8 +10,8 @@
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"lint": "eslint ."
 	},
-	"keywords": [],
-	"license": "0-BSD",
+	"keywords": ["obsidian", "wechat", "weixin"],
+	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^16.11.6",
 		"esbuild": "0.25.5",
@@ -24,6 +24,10 @@
 		"jiti": "2.6.1"
 	},
 	"dependencies": {
-		"obsidian": "latest"
+		"obsidian": "latest",
+		"markdown-it": "^14.0.0",
+		"juice": "^10.0.0",
+		"browser-image-compression": "^2.0.2",
+		"pica": "^9.0.0"
 	}
 }
