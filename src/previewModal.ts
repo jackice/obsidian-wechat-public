@@ -107,9 +107,10 @@ export class PreviewModal extends Modal {
 
     } catch (error) {
       console.error('Preview failed:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       this.previewContainer.empty();
       this.previewContainer.createEl('p', {
-        text: `预览加载失败: ${error.message}`,
+        text: `预览加载失败: ${errorMessage}`,
         cls: 'error-message'
       });
     }

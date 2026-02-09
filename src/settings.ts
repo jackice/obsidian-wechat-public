@@ -62,7 +62,7 @@ export class WechatPluginSettingTab extends PluginSettingTab {
         button
           .setButtonText("获取 IP")
           .onClick(async () => {
-            const ip = await this.plugin.wechatApi?.getCurrentIP();
+            const ip = await this.plugin.api?.getCurrentIP();
             if (ip) {
               this.plugin.settings.currentIP = ip;
               await this.plugin.saveSettings();

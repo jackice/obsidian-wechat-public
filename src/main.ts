@@ -1,101 +1,201 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, WeChatPluginSettings, WechatPluginSettingTab} from "./settings";
+import { Plugin, App, Notice, Editor, MarkdownView } from 'obsidian';
+import {
+  WeChatPluginSettings,
+  DEFAULT_SETTINGS,
+  WechatPluginSettingTab
+} from "./settings";
 import { WechatApi } from "./wechatApi";
+import { ImageProcessor } from "./imageProcessor";
+import { MarkdownProcessor } from "./markdownProcessor";
+import { PreviewModal } from "./previewModal";
+import { TFile } from "obsidian";
 
-// Remember to rename these classes and interfaces!
+export default class WechatPlugin extends Plugin {
+  settings: WeChatPluginSettings;
+  api: WechatApi;
+  imageProcessor: ImageProcessor;
+  markdownProcessor: MarkdownProcessor;
 
-export default class MyPlugin extends Plugin {
-	settings: WeChatPluginSettings;
-	wechatApi?: WechatApi;
+  async onload() {
+    await this.loadSettings();
 
-	async onload() {
-		await this.loadSettings();
+    // 初始化 API 和处理器
+    this.api = new WechatApi(this.settings.appId, this.settings.appSecret);
+    this.imageProcessor = new ImageProcessor(this.api, this.settings);
+    this.markdownProcessor = new MarkdownProcessor(
+      this.app.vault,
+      this.api,
+      this.imageProcessor,
+      this.settings
+    );
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+    // 添加设置页面
+    this.addSettingTab(new WechatPluginSettingTab(this.app, this));
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+    // 添加 Ribbon 图标
+    this.addRibbonIcon('send', '发布到微信公众号', (evt: MouseEvent) => {
+      this.publishCurrentNote();
+    });
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+    // 添加命令：发布到微信公众号
+    this.addCommand({
+      id: 'publish-to-wechat',
+      name: '发布到微信公众号',
+      editorCallback: async (editor: Editor, view: MarkdownView) => {
+        await this.publishCurrentNote();
+      },
+    });
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
-		});
+    // 添加命令：预览发布效果
+    this.addCommand({
+      id: 'preview-wechat',
+      name: '预览发布效果',
+      editorCallback: async (editor: Editor, view: MarkdownView) => {
+        await this.previewCurrentNote(editor, view);
+      },
+    });
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new WechatPluginSettingTab(this.app, this));
+    // 监听发布事件
+    window.addEventListener('wechat-publish', this.handlePublishEvent.bind(this));
+  }
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
+  async publishCurrentNote() {
+    const file = this.app.workspace.getActiveFile();
+    if (!file || file.extension !== 'md') {
+      new Notice('请先打开一个 Markdown 文件');
+      return;
+    }
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view) {
+      new Notice('无法获取编辑器视图');
+      return;
+    }
 
-	}
+    const content = view.editor.getValue();
+    const title = file.basename;
 
-	onunload() {
-	}
+    // 检查配置
+    if (!this.settings.appId || !this.settings.appSecret) {
+      new Notice('请先在设置中配置 AppID 和 AppSecret');
+      return;
+    }
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<WeChatPluginSettings>);
-	}
+    // 检查 IP 白名单
+    const currentIP = this.settings.useManualIP
+      ? this.settings.manualIP
+      : this.settings.currentIP;
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
+    if (!currentIP) {
+      new Notice('请先获取当前 IP 地址或手动输入 IP');
+      return;
+    }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+    // 如果启用了预览，先显示预览
+    if (this.settings.enablePreview) {
+      new PreviewModal(this.app, this.markdownProcessor, file, content).open();
+      return;
+    }
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+    // 直接发布
+    await this.publishContent(title, content, file);
+  }
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+  async previewCurrentNote(editor: Editor, view: MarkdownView) {
+    const file = view.file;
+    if (!file) {
+      new Notice('无法获取当前文件');
+      return;
+    }
+
+    const content = editor.getValue();
+    new PreviewModal(this.app, this.markdownProcessor, file, content).open();
+  }
+
+  async handlePublishEvent(event: CustomEvent) {
+    const { content, sourceFile, html } = event.detail;
+    const title = sourceFile.basename;
+    await this.publishContent(title, content, sourceFile, html);
+  }
+
+  async publishContent(
+    title: string,
+    content: string,
+    sourceFile: TFile,
+    preProcessedHtml?: string
+  ) {
+    const notice = new Notice("正在发布到微信公众号...", 0);
+
+    try {
+      let html: string;
+      let coverMediaId: string | null;
+
+      if (preProcessedHtml) {
+        // 使用预处理的 HTML
+        html = preProcessedHtml;
+        // 需要上传图片获取封面
+        const result = await this.markdownProcessor.process(
+          content,
+          sourceFile,
+          true, // 上传图片
+          (current, total, message) => {
+            notice.setMessage(`${message} (${current}/${total})`);
+          }
+        );
+        coverMediaId = result.coverMediaId;
+      } else {
+        // 完整处理
+        const result = await this.markdownProcessor.process(
+          content,
+          sourceFile,
+          true, // 上传图片
+          (current, total, message) => {
+            notice.setMessage(`${message} (${current}/${total})`);
+          }
+        );
+        html = result.html;
+        coverMediaId = result.coverMediaId;
+      }
+
+      if (!coverMediaId) {
+        throw new Error(
+          "文章中没有检测到图片，且未配置默认封面。微信草稿必须要有封面图。",
+        );
+      }
+
+      notice.setMessage("正在推送草稿...");
+
+      // 推送草稿
+      await this.api.createDraft(title, html, coverMediaId);
+
+      notice.setMessage("✅ 发布成功！请前往公众号后台查看草稿箱。");
+      setTimeout(() => notice.hide(), 5000);
+
+    } catch (error) {
+      console.error(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      notice.setMessage(`❌ 发布失败: ${errorMessage}`);
+      setTimeout(() => notice.hide(), 10000);
+    }
+  }
+
+  onunload() {
+    // 清理事件监听
+    window.removeEventListener('wechat-publish', this.handlePublishEvent.bind(this));
+  }
+
+  async loadSettings() {
+    this.settings = Object.assign(
+      {},
+      DEFAULT_SETTINGS,
+      await this.loadData() as Partial<WeChatPluginSettings>,
+    );
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+    // 更新 API 实例的凭证
+    this.api.appId = this.settings.appId;
+    this.api.appSecret = this.settings.appSecret;
+  }
 }
