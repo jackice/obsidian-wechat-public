@@ -1,4 +1,4 @@
-import { requestUrl, RequestUrlParam, Notice } from "obsidian";
+import { requestUrl, RequestUrlParam } from "obsidian";
 
 const TOKEN_EXPIRY_BUFFER_SECONDS = 200;
 const BOUNDARY_PREFIX = "----ObsidianWechatBoundary";
@@ -47,7 +47,6 @@ export class WechatApi {
 	appSecret: string;
 	private accessToken: string = "";
 	private expiresAt: number = 0;
-	// 代理设置
 	private useProxy: boolean = false;
 	private proxyUrl: string = "";
 	private proxyApiKey: string = "";
@@ -63,41 +62,118 @@ export class WechatApi {
 		this.proxyApiKey = proxyApiKey;
 	}
 
-	/**
-	 * 发送请求，支持直接模式和代理模式
-	 */
+	private arrayBufferToBase64(buffer: ArrayBuffer): string {
+		const bytes = new Uint8Array(buffer);
+		let binary = "";
+		const chunkSize = 32768;
+		for (let i = 0; i < bytes.length; i += chunkSize) {
+			binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize) as unknown as number[]);
+		}
+		return btoa(binary);
+	}
+
 	private async sendRequest(options: RequestUrlParam): Promise<any> {
+		console.log(`[WechatApi] Mode: ${this.useProxy ? 'PROXY' : 'DIRECT'}, proxyUrl: ${this.proxyUrl || 'none'}`);
+
 		if (this.useProxy && this.proxyUrl) {
-			// 代理模式：将请求转发到代理服务器
-			const proxyOptions: RequestUrlParam = {
-				url: this.proxyUrl,
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					...(this.proxyApiKey ? { "X-API-Key": this.proxyApiKey } : {}),
-				},
-				body: JSON.stringify({
+			const isUpload = options.body instanceof ArrayBuffer;
+			const proxyPath = isUpload ? "/api/wechat/upload" : "/api/wechat";
+			const proxyUrl = `${this.proxyUrl}${proxyPath}`;
+
+			if (isUpload) {
+				const body = options.body as ArrayBuffer;
+				const base64Body = this.arrayBufferToBase64(body);
+				const multipartBody = JSON.stringify({
+					target_url: options.url,
+					filename: "upload",
+					content_type: options.contentType || "application/octet-stream",
+					file: base64Body,
+				});
+
+				console.log(`[WechatApi] Upload proxy request: ${proxyUrl}, size: ${base64Body.length}`);
+
+				const proxyOptions: RequestUrlParam = {
+					url: proxyUrl,
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						...(this.proxyApiKey ? { "Authorization": `Bearer ${this.proxyApiKey}` } : {}),
+					},
+					body: multipartBody,
+				};
+
+				try {
+					const res = await requestUrl(proxyOptions);
+					console.log(`[WechatApi] Upload response: ${JSON.stringify(res.json)}`);
+
+					// 代理返回格式: {"data": {...}}
+					const responseData = res.json?.data || res.json;
+					if (responseData?.errcode && responseData.errcode !== 0) {
+						throw new WechatApiError(responseData.errcode, responseData.errmsg, `上传失败: ${responseData.errmsg}`);
+					}
+					return responseData;
+				} catch (error: any) {
+					console.error(`[WechatApi] Upload failed: ${error?.status || 'unknown'}, ${error?.message || error}`);
+					throw error;
+				}
+			} else {
+				const proxyBody = JSON.stringify({
 					target_url: options.url,
 					method: options.method || "GET",
-					headers: options.headers,
 					body: options.body,
-				}),
-			};
-			const res = await requestUrl(proxyOptions);
-			return res.json;
+				});
+
+				console.log(`[WechatApi] Proxy request: ${proxyUrl}`);
+
+				const proxyOptions: RequestUrlParam = {
+					url: proxyUrl,
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						...(this.proxyApiKey ? { "Authorization": `Bearer ${this.proxyApiKey}` } : {}),
+					},
+					body: proxyBody,
+				};
+
+				try {
+					const res = await requestUrl(proxyOptions);
+					console.log(`[WechatApi] Proxy response: ${JSON.stringify(res.json)}`);
+
+					// 代理返回格式: {"data": {...}}
+					const responseData = res.json?.data || res.json;
+					if (responseData?.errcode && responseData.errcode !== 0) {
+						throw new WechatApiError(responseData.errcode, responseData.errmsg, `请求失败: ${responseData.errmsg}`);
+					}
+					return responseData;
+				} catch (error: any) {
+					console.error(`[WechatApi] Proxy failed: ${error?.status || 'unknown'}, ${error?.message || error}`);
+					throw error;
+				}
+			}
 		} else {
-			// 直接模式
-			const res = await requestUrl(options);
-			return res.json;
+			console.log(`[WechatApi] Direct request: ${options.url}`);
+			try {
+				const res = await requestUrl(options);
+				if (res.json?.errcode && res.json.errcode !== 0) {
+					throw new WechatApiError(res.json.errcode, res.json.errmsg, `请求失败: ${res.json.errmsg}`);
+				}
+				return res.json;
+			} catch (error: any) {
+				console.error(`[WechatApi] Direct failed: ${error?.status || 'unknown'}`);
+				throw error;
+			}
 		}
 	}
 
 	async getAccessToken(): Promise<string> {
 		if (this.accessToken && Date.now() < this.expiresAt) {
+			const remaining = Math.round((this.expiresAt - Date.now()) / 1000);
+			console.log(`[WechatApi] Using cached token, expires in ${remaining}s`);
 			return this.accessToken;
 		}
 
-		const url = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${this.appId}&secret=${this.appSecret}`;
+		const url = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${this.appId}&secret=***`;
+		console.log(`[WechatApi] Fetching new token...`);
 		const data = await this.sendRequest({ url, method: "GET" }) as AccessTokenResponse;
 
 		if (data.errcode) {
@@ -110,6 +186,7 @@ export class WechatApi {
 
 		this.accessToken = data.access_token;
 		this.expiresAt = Date.now() + (data.expires_in - TOKEN_EXPIRY_BUFFER_SECONDS) * 1000;
+		console.log(`[WechatApi] Token fetched, expires in ${data.expires_in}s`);
 		return this.accessToken;
 	}
 
@@ -141,22 +218,18 @@ export class WechatApi {
 		filename: string,
 	): Promise<WechatApiResponse> {
 		const token = await this.getAccessToken();
-		const { body, boundary } = this.buildMultipartBody(
-			fileBuffer,
-			filename,
-			"media",
-			"image/jpeg",
-		);
+		const uploadUrl = `${url}&access_token=${token}`;
+		console.log(`[WechatApi] Uploading: ${filename}, size: ${fileBuffer.byteLength} bytes`);
 
 		return await this.sendRequest({
-			url: `${url}&access_token=${token}`,
+			url: uploadUrl,
 			method: "POST",
-			contentType: `multipart/form-data; boundary=${boundary}`,
-			body: body,
+			contentType: "application/octet-stream",
+			body: fileBuffer,
 		}) as WechatApiResponse;
 	}
 
-	async createDraft(
+		async createDraft(
 		title: string,
 		content: string,
 		thumbMediaId: string,
@@ -200,32 +273,5 @@ export class WechatApi {
 			}
 			throw new Error(`获取 IP 失败: ${error}`);
 		}
-	}
-
-	private buildMultipartBody(
-		fileBuffer: ArrayBuffer,
-		filename: string,
-		fieldName: string,
-		mimeType: string = "image/jpeg",
-	) {
-		const boundary =
-			BOUNDARY_PREFIX +
-			Math.random().toString(36).substring(2);
-		const prefix = `--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`;
-		const suffix = `\r\n--${boundary}--`;
-
-		const prefixBuffer = new TextEncoder().encode(prefix);
-		const suffixBuffer = new TextEncoder().encode(suffix);
-		const fileUint8 = new Uint8Array(fileBuffer);
-
-		const totalLength =
-			prefixBuffer.length + fileUint8.length + suffixBuffer.length;
-		const body = new Uint8Array(totalLength);
-
-		body.set(prefixBuffer, 0);
-		body.set(fileUint8, prefixBuffer.length);
-		body.set(suffixBuffer, prefixBuffer.length + fileUint8.length);
-
-		return { body: body.buffer, boundary };
 	}
 }
