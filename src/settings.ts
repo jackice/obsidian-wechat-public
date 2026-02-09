@@ -57,30 +57,61 @@ export class WechatPluginSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("获取当前 IP")
-      .setDesc("点击按钮获取当前公网 IP 地址")
+      .setDesc("点击按钮获取当前公网 IP 地址（需要在微信后台添加白名单）")
       .addButton((button) =>
         button
           .setButtonText("获取 IP")
           .onClick(async () => {
             try {
-              // 使用 Obsidian 的 requestUrl 直接获取 IP
-              const { requestUrl } = require('obsidian');
-              const res = await requestUrl({ 
-                url: 'https://api.ipify.org?format=json', 
-                method: "GET" 
-              });
-              const ip = res.json.ip;
+              // 尝试多个 IP 查询服务
+              const ipServices = [
+                'https://api.ipify.org?format=json',
+                'https://httpbin.org/ip',
+                'https://ipapi.co/json/'
+              ];
+              
+              let ip: string | null = null;
+              let lastError: Error | null = null;
+              
+              for (const service of ipServices) {
+                try {
+                  const { requestUrl } = require('obsidian');
+                  const res = await requestUrl({ 
+                    url: service, 
+                    method: "GET",
+                    throw: false // 不抛出 HTTP 错误
+                  });
+                  
+                  if (res.status === 200) {
+                    // 不同服务的返回格式不同
+                    if (service.includes('ipify')) {
+                      ip = res.json.ip;
+                    } else if (service.includes('httpbin')) {
+                      ip = res.json.origin;
+                    } else if (service.includes('ipapi')) {
+                      ip = res.json.ip;
+                    }
+                    
+                    if (ip) break;
+                  }
+                } catch (e) {
+                  lastError = e instanceof Error ? e : new Error(String(e));
+                  console.warn(`Failed to get IP from ${service}:`, e);
+                  // 继续尝试下一个服务
+                }
+              }
               
               if (ip) {
                 this.plugin.settings.currentIP = ip;
                 await this.plugin.saveSettings();
-                new Notice(`当前 IP: ${ip}`);
+                new Notice(`✅ 当前 IP: ${ip}\n请将此 IP 添加到微信公众号后台的 IP 白名单中`, 5000);
               } else {
-                new Notice('获取 IP 失败，请手动输入');
+                console.error('All IP services failed:', lastError);
+                new Notice('❌ 自动获取 IP 失败\n\n可能原因：\n1. 网络连接问题\n2. 防火墙阻止\n3. Obsidian 安全限制\n\n请手动输入您的 IP 地址', 8000);
               }
             } catch (error) {
               console.error('Failed to get IP:', error);
-              new Notice('获取 IP 失败，请手动输入');
+              new Notice('❌ 获取 IP 失败，请手动输入您的 IP 地址', 5000);
             }
           }),
       );
