@@ -70,7 +70,13 @@ export default class WechatPlugin extends Plugin {
 
     try {
       // 初始化 API 和处理器
-      this.api = new WechatApi(this.settings.appId, this.settings.appSecret);
+      this.api = new WechatApi(
+        this.settings.appId,
+        this.settings.appSecret,
+        this.settings.useProxy,
+        this.settings.proxyUrl,
+        this.settings.proxyApiKey
+      );
       this.imageProcessor = new ImageProcessor(this.api, this.settings);
       this.markdownProcessor = new MarkdownProcessor(
         this.app.vault,

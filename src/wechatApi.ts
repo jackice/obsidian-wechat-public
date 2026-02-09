@@ -47,13 +47,49 @@ export class WechatApi {
 	appSecret: string;
 	private accessToken: string = "";
 	private expiresAt: number = 0;
+	// 代理设置
+	private useProxy: boolean = false;
+	private proxyUrl: string = "";
+	private proxyApiKey: string = "";
 
-	constructor(appId: string, appSecret: string) {
+	constructor(appId: string, appSecret: string, useProxy: boolean = false, proxyUrl: string = "", proxyApiKey: string = "") {
 		if (!appId || !appSecret) {
 			throw new Error("appId 和 appSecret 不能为空");
 		}
 		this.appId = appId;
 		this.appSecret = appSecret;
+		this.useProxy = useProxy;
+		this.proxyUrl = proxyUrl;
+		this.proxyApiKey = proxyApiKey;
+	}
+
+	/**
+	 * 发送请求，支持直接模式和代理模式
+	 */
+	private async sendRequest(options: RequestUrlParam): Promise<any> {
+		if (this.useProxy && this.proxyUrl) {
+			// 代理模式：将请求转发到代理服务器
+			const proxyOptions: RequestUrlParam = {
+				url: this.proxyUrl,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					...(this.proxyApiKey ? { "X-API-Key": this.proxyApiKey } : {}),
+				},
+				body: JSON.stringify({
+					target_url: options.url,
+					method: options.method || "GET",
+					headers: options.headers,
+					body: options.body,
+				}),
+			};
+			const res = await requestUrl(proxyOptions);
+			return res.json;
+		} else {
+			// 直接模式
+			const res = await requestUrl(options);
+			return res.json;
+		}
 	}
 
 	async getAccessToken(): Promise<string> {
@@ -62,8 +98,7 @@ export class WechatApi {
 		}
 
 		const url = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${this.appId}&secret=${this.appSecret}`;
-		const res = await requestUrl({ url, method: "GET" });
-		const data = res.json as AccessTokenResponse;
+		const data = await this.sendRequest({ url, method: "GET" }) as AccessTokenResponse;
 
 		if (data.errcode) {
 			throw new WechatApiError(
@@ -113,14 +148,12 @@ export class WechatApi {
 			"image/jpeg",
 		);
 
-		const res = await requestUrl({
+		return await this.sendRequest({
 			url: `${url}&access_token=${token}`,
 			method: "POST",
 			contentType: `multipart/form-data; boundary=${boundary}`,
 			body: body,
-		});
-
-		return res.json as WechatApiResponse;
+		}) as WechatApiResponse;
 	}
 
 	async createDraft(
@@ -140,14 +173,12 @@ export class WechatApi {
 			show_cover_pic: 1,
 		};
 
-		const res = await requestUrl({
+		const data = await this.sendRequest({
 			url: url,
 			method: "POST",
 			contentType: "application/json",
 			body: JSON.stringify({ articles: [article] }),
-		});
-
-		const data = res.json as CreateDraftResponse;
+		}) as CreateDraftResponse;
 		if (data.errcode)
 			throw new WechatApiError(data.errcode, data.errmsg, `草稿创建失败: ${data.errmsg}`);
 		return data;

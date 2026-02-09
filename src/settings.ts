@@ -17,6 +17,10 @@ export interface WeChatPluginSettings {
   maxWidth: number;
   enablePreview: boolean;
   previewMode: 'quick' | 'full';
+  // 代理设置
+  useProxy: boolean;
+  proxyUrl: string;
+  proxyApiKey: string;
 }
 
 export const DEFAULT_SETTINGS: WeChatPluginSettings = {
@@ -34,6 +38,10 @@ export const DEFAULT_SETTINGS: WeChatPluginSettings = {
   maxWidth: 1080,
   enablePreview: true,
   previewMode: "quick",
+  // 代理设置
+  useProxy: false,
+  proxyUrl: "",
+  proxyApiKey: "",
 };
 
 export class WechatPluginSettingTab extends PluginSettingTab {
@@ -147,6 +155,50 @@ export class WechatPluginSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.manualIP)
           .onChange(async (value) => {
             this.plugin.settings.manualIP = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    // 代理设置
+    new Setting(containerEl).setName("代理服务器设置").setHeading();
+    containerEl.createEl("p", {
+      text: "如果你有云服务器，可以通过代理访问微信公众号API，避免IP白名单和本地网络限制。",
+    });
+
+    new Setting(containerEl)
+      .setName("使用代理服务器")
+      .setDesc("启用后，所有微信API请求将通过代理服务器转发")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.useProxy)
+          .onChange(async (value) => {
+            this.plugin.settings.useProxy = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("代理服务器地址")
+      .setDesc("你的云服务器代理API地址，例如: https://your-server.com/api/wechat")
+      .addText((text) =>
+        text
+          .setPlaceholder("https://your-proxy-server.com/api/wechat")
+          .setValue(this.plugin.settings.proxyUrl)
+          .onChange(async (value) => {
+            this.plugin.settings.proxyUrl = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("代理API密钥")
+      .setDesc("用于验证代理请求的密钥（如果你的代理服务器需要）")
+      .addText((text) =>
+        text
+          .setPlaceholder("可选")
+          .setValue(this.plugin.settings.proxyApiKey)
+          .onChange(async (value) => {
+            this.plugin.settings.proxyApiKey = value;
             await this.plugin.saveSettings();
           }),
       );
