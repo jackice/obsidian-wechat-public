@@ -12,24 +12,78 @@ import { TFile } from "obsidian";
 
 export default class WechatPlugin extends Plugin {
   settings: WeChatPluginSettings;
-  api: WechatApi;
-  imageProcessor: ImageProcessor;
-  markdownProcessor: MarkdownProcessor;
+  api: WechatApi | null = null;
+  imageProcessor: ImageProcessor | null = null;
+  markdownProcessor: MarkdownProcessor | null = null;
 
   async onload() {
     await this.loadSettings();
 
-    // 初始化 API 和处理器
-    this.api = new WechatApi(this.settings.appId, this.settings.appSecret);
-    this.imageProcessor = new ImageProcessor(this.api, this.settings);
-    this.markdownProcessor = new MarkdownProcessor(
-      this.app.vault,
-      this.api,
-      this.imageProcessor,
-      this.settings
-    );
+    // 延迟初始化 API 和处理器，直到第一次使用时
+    // 这样用户可以在没有配置的情况下启用插件
 
     // 添加设置页面
+    this.addSettingTab(new WechatPluginSettingTab(this.app, this));
+
+    // 添加 Ribbon 图标
+    this.addRibbonIcon('send', '发布到微信公众号', (evt: MouseEvent) => {
+      this.publishCurrentNote();
+    });
+
+    // 添加命令：发布到微信公众号
+    this.addCommand({
+      id: 'publish-to-wechat',
+      name: '发布到微信公众号',
+      editorCallback: async (editor: Editor, view: MarkdownView) => {
+        await this.publishCurrentNote();
+      },
+    });
+
+    // 添加命令：预览发布效果
+    this.addCommand({
+      id: 'preview-wechat',
+      name: '预览发布效果',
+      editorCallback: async (editor: Editor, view: MarkdownView) => {
+        await this.previewCurrentNote(editor, view);
+      },
+    });
+
+    // 监听发布事件
+    window.addEventListener('wechat-publish', this.handlePublishEvent.bind(this));
+  }
+
+  /**
+   * 延迟初始化 API 和处理器
+   * 在用户第一次使用插件功能时调用
+   */
+  private initializeProcessors(): boolean {
+    // 如果已经初始化，直接返回 true
+    if (this.api && this.imageProcessor && this.markdownProcessor) {
+      return true;
+    }
+
+    // 检查配置
+    if (!this.settings.appId || !this.settings.appSecret) {
+      new Notice('请先在设置中配置 AppID 和 AppSecret');
+      return false;
+    }
+
+    try {
+      // 初始化 API 和处理器
+      this.api = new WechatApi(this.settings.appId, this.settings.appSecret);
+      this.imageProcessor = new ImageProcessor(this.api, this.settings);
+      this.markdownProcessor = new MarkdownProcessor(
+        this.app.vault,
+        this.api,
+        this.imageProcessor,
+        this.settings
+      );
+      return true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      new Notice(`初始化失败: ${errorMessage}`);
+      return false;
+    }
     this.addSettingTab(new WechatPluginSettingTab(this.app, this));
 
     // 添加 Ribbon 图标
@@ -75,12 +129,6 @@ export default class WechatPlugin extends Plugin {
     const content = view.editor.getValue();
     const title = file.basename;
 
-    // 检查配置
-    if (!this.settings.appId || !this.settings.appSecret) {
-      new Notice('请先在设置中配置 AppID 和 AppSecret');
-      return;
-    }
-
     // 检查 IP 白名单
     const currentIP = this.settings.useManualIP
       ? this.settings.manualIP
@@ -91,9 +139,14 @@ export default class WechatPlugin extends Plugin {
       return;
     }
 
+    // 延迟初始化处理器
+    if (!this.initializeProcessors()) {
+      return;
+    }
+
     // 如果启用了预览，先显示预览
     if (this.settings.enablePreview) {
-      new PreviewModal(this.app, this.markdownProcessor, file, content).open();
+      new PreviewModal(this.app, this.markdownProcessor!, file, content).open();
       return;
     }
 
@@ -108,8 +161,13 @@ export default class WechatPlugin extends Plugin {
       return;
     }
 
+    // 延迟初始化处理器
+    if (!this.initializeProcessors()) {
+      return;
+    }
+
     const content = editor.getValue();
-    new PreviewModal(this.app, this.markdownProcessor, file, content).open();
+    new PreviewModal(this.app, this.markdownProcessor!, file, content).open();
   }
 
   async handlePublishEvent(event: CustomEvent) {
@@ -134,7 +192,7 @@ export default class WechatPlugin extends Plugin {
         // 使用预处理的 HTML
         html = preProcessedHtml;
         // 需要上传图片获取封面
-        const result = await this.markdownProcessor.process(
+        const result = await this.markdownProcessor!.process(
           content,
           sourceFile,
           true, // 上传图片
@@ -145,7 +203,7 @@ export default class WechatPlugin extends Plugin {
         coverMediaId = result.coverMediaId;
       } else {
         // 完整处理
-        const result = await this.markdownProcessor.process(
+        const result = await this.markdownProcessor!.process(
           content,
           sourceFile,
           true, // 上传图片
@@ -166,7 +224,7 @@ export default class WechatPlugin extends Plugin {
       notice.setMessage("正在推送草稿...");
 
       // 推送草稿
-      await this.api.createDraft(title, html, coverMediaId);
+      await this.api!.createDraft(title, html, coverMediaId);
 
       notice.setMessage("✅ 发布成功！请前往公众号后台查看草稿箱。");
       setTimeout(() => notice.hide(), 5000);
@@ -194,8 +252,10 @@ export default class WechatPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
-    // 更新 API 实例的凭证
-    this.api.appId = this.settings.appId;
-    this.api.appSecret = this.settings.appSecret;
+    // 如果 API 已初始化，更新凭证
+    if (this.api) {
+      this.api.appId = this.settings.appId;
+      this.api.appSecret = this.settings.appSecret;
+    }
   }
 }
