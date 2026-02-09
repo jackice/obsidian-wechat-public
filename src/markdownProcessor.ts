@@ -1,11 +1,28 @@
 import MarkdownIt from 'markdown-it';
 import juice from 'juice';
-import { TFile, Vault } from 'obsidian';
+import { TFile, Vault, normalizePath } from 'obsidian';
 import { WechatApi } from './wechatApi';
 import { ImageProcessor, ImageInfo, ProcessedImage } from './imageProcessor';
+import { WeChatPluginSettings } from './settings';
 
-// 预设主题 CSS
-const THEMES: Record<string, string> = {
+export type ThemeType = 'default' | 'simple' | 'tech' | 'literary';
+
+export const THEME_NAMES: readonly ThemeType[] = ['default', 'simple', 'tech', 'literary'] as const;
+
+const PROGRESS_STAGES = {
+  READING_IMAGES: "正在读取图片文件...",
+  UPLOADING_IMAGES: "正在上传图片...",
+  PROCESSING_IMAGES: "正在处理图片..."
+} as const;
+
+class MarkdownProcessorError extends Error {
+  constructor(message: string, public readonly cause?: Error) {
+    super(message);
+    this.name = 'MarkdownProcessorError';
+  }
+}
+
+const THEMES: Record<ThemeType, string> = {
   default: `
     h1 { font-size: 22px; font-weight: bold; margin-bottom: 20px; color: #333; }
     h2 { font-size: 18px; font-weight: bold; margin-top: 30px; margin-bottom: 15px; border-bottom: 2px solid #07c160; padding-bottom: 10px; color: #333; }
@@ -43,82 +60,166 @@ const THEMES: Record<string, string> = {
   `,
 };
 
+/**
+ * Markdown 处理器，负责将 Markdown 内容转换为带样式的 HTML
+ */
 export class MarkdownProcessor {
   vault: Vault;
   api: WechatApi;
   imageProcessor: ImageProcessor;
-  settings: any;
+  settings: WeChatPluginSettings;
 
-  constructor(vault: Vault, api: WechatApi, imageProcessor: ImageProcessor, settings: any) {
+  /**
+   * 构造函数
+   * @param vault - Obsidian Vault 实例
+   * @param api - 微信 API 实例
+   * @param imageProcessor - 图片处理器
+   * @param settings - 插件设置
+   */
+  constructor(vault: Vault, api: WechatApi, imageProcessor: ImageProcessor, settings: WeChatPluginSettings) {
     this.vault = vault;
     this.api = api;
     this.imageProcessor = imageProcessor;
     this.settings = settings;
   }
 
+  /**
+   * 处理 Markdown 内容
+   * @param content - Markdown 内容
+   * @param sourceFile - 源文件
+   * @param uploadImages - 是否上传图片
+   * @param onProgress - 进度回调函数
+   * @returns 包含 HTML 和封面 Media ID 的对象
+   */
   async process(
     content: string,
     sourceFile: TFile,
     uploadImages: boolean = true,
     onProgress?: (current: number, total: number, message: string) => void
   ): Promise<{ html: string; coverMediaId: string | null }> {
-    const md = new MarkdownIt({ html: true });
-
-    // 1. 提取图片
     const images = this.extractImages(content);
+    const fileBuffers = await this.readImageFiles(images, sourceFile, onProgress);
+
+    const { uploadedImages, firstImageBuffer, firstImageName } = await this.processImageContent(
+      images,
+      fileBuffers,
+      uploadImages,
+      onProgress
+    );
+
+    content = this.replaceImageLinks(content, uploadedImages);
+    const html = await this.renderHtmlWithStyles(content);
+    const coverMediaId = await this.uploadCoverIfNeeded(firstImageBuffer, firstImageName, uploadImages);
+
+    return { html, coverMediaId };
+  }
+
+  /**
+   * 读取图片文件
+   * @param images - 图片信息列表
+   * @param sourceFile - 源文件
+   * @param onProgress - 进度回调函数
+   * @returns 文件名到二进制数据的映射
+   */
+  private async readImageFiles(
+    images: ImageInfo[],
+    sourceFile: TFile,
+    onProgress?: (current: number, total: number, message: string) => void
+  ): Promise<Map<string, ArrayBuffer>> {
     const fileBuffers = new Map<string, ArrayBuffer>();
 
-    if (images.length > 0) {
-      if (onProgress) {
-        onProgress(0, images.length, "正在读取图片文件...");
-      }
+    if (images.length === 0) {
+      return fileBuffers;
+    }
 
-      for (let i = 0; i < images.length; i++) {
-        const image = images[i];
-        const file = this.vault.getAbstractFileByPath(
-          this.resolvePath(image.fileName, sourceFile),
-        );
+    if (onProgress) {
+      onProgress(0, images.length, PROGRESS_STAGES.READING_IMAGES);
+    }
 
-        if (file instanceof TFile) {
-          const buffer = await this.vault.readBinary(file);
-          fileBuffers.set(image.fileName, buffer);
-        }
+    for (const image of images) {
+      const file = this.vault.getAbstractFileByPath(
+        this.resolvePath(image.fileName, sourceFile),
+      );
+
+      if (file instanceof TFile) {
+        const buffer = await this.vault.readBinary(file);
+        fileBuffers.set(image.fileName, buffer);
       }
     }
 
-    let uploadedImages: ProcessedImage[] = [];
-    let firstImageBuffer: ArrayBuffer | null = null;
-    let firstImageName = "";
+    return fileBuffers;
+  }
 
-    // 2. 处理图片（上传或仅占位符）
+  /**
+   * 处理图片内容（上传或使用占位符）
+   * @param images - 图片信息列表
+   * @param fileBuffers - 文件二进制数据映射
+   * @param uploadImages - 是否上传图片
+   * @param onProgress - 进度回调函数
+   * @returns 包含已上传图片、第一张图片缓冲区和名称的对象
+   */
+  private async processImageContent(
+    images: ImageInfo[],
+    fileBuffers: Map<string, ArrayBuffer>,
+    uploadImages: boolean,
+    onProgress?: (current: number, total: number, message: string) => void
+  ): Promise<{ uploadedImages: ProcessedImage[]; firstImageBuffer: ArrayBuffer | null; firstImageName: string }> {
     if (uploadImages && images.length > 0) {
       const result = await this.imageProcessor.processImages(
         images,
         fileBuffers,
         onProgress
       );
-      uploadedImages = result.uploadedImages;
-      firstImageBuffer = result.firstImageBuffer;
-      firstImageName = result.firstImageName;
+      return result;
     } else {
-      // 使用占位符
-      firstImageBuffer = fileBuffers.get(images[0]?.fileName) || null;
-      firstImageName = images[0]?.fileName || "";
+      const firstImage = images[0];
+      return {
+        uploadedImages: [],
+        firstImageBuffer: firstImage ? fileBuffers.get(firstImage.fileName) || null : null,
+        firstImageName: firstImage?.fileName || ""
+      };
     }
+  }
 
-    // 3. 替换图片链接
+  /**
+   * 替换 Markdown 中的图片链接
+   * @param content - Markdown 内容
+   * @param uploadedImages - 已上传的图片列表
+   * @returns 替换后的内容
+   */
+  private replaceImageLinks(content: string, uploadedImages: ProcessedImage[]): string {
     for (const uploadedImage of uploadedImages) {
       content = content.replace(uploadedImage.originalTag, `<img src="${uploadedImage.uploadedUrl}" />`);
     }
+    return content;
+  }
 
-    // 4. 渲染 HTML
+  /**
+   * 渲染 HTML 并内联样式
+   * @param content - Markdown 内容
+   * @returns 带样式的 HTML
+   */
+  private async renderHtmlWithStyles(content: string): Promise<string> {
+    const md = new MarkdownIt({ html: true });
     let html = md.render(content);
-
-    // 5. 内联 CSS 样式
     html = await this.inlineStyles(html);
+    return html;
+  }
 
-    // 6. 上传封面（如果需要）
+  /**
+   * 上传封面图片（如果需要）
+   * @param firstImageBuffer - 第一张图片的二进制数据
+   * @param firstImageName - 第一张图片的文件名
+   * @param uploadImages - 是否上传图片
+   * @returns 封面 Media ID 或 null
+   */
+  private async uploadCoverIfNeeded(
+    firstImageBuffer: ArrayBuffer | null,
+    firstImageName: string,
+    uploadImages: boolean
+  ): Promise<string | null> {
     let coverMediaId = null;
+
     if (uploadImages && firstImageBuffer) {
       try {
         coverMediaId = await this.imageProcessor.uploadCover(
@@ -127,60 +228,77 @@ export class MarkdownProcessor {
         );
       } catch (e) {
         console.error("Cover upload failed", e);
-        // 尝试使用默认封面
         if (this.settings.defaultCoverMediaId) {
           coverMediaId = this.settings.defaultCoverMediaId;
         }
       }
     }
 
-    return { html, coverMediaId };
+    return coverMediaId;
   }
 
+  /**
+   * 从 Markdown 内容中提取图片
+   * @param content - Markdown 内容
+   * @returns 图片信息列表
+   */
   private extractImages(content: string): ImageInfo[] {
     const images: ImageInfo[] = [];
 
-    // 匹配 WikiLink: ![[image.png]] 或 ![[image.png|100x80]]
     const wikiImgRegex = /!\[\[(.*?)\]\]/g;
-    let match;
+    let match: RegExpExecArray | null;
     while ((match = wikiImgRegex.exec(content)) !== null) {
       const originalTag = match[0];
       const fullText = match[1];
-      const fileName = fullText.split("|")[0]; // 提取文件名，忽略尺寸
+      if (!fullText) continue;
+
+      const fileName = fullText.split("|")[0];
+      if (!fileName) continue;
+
       const sizeMatch = fullText.match(/\|(\d+x\d+|\d+)/);
       const size = sizeMatch ? sizeMatch[1] : undefined;
 
       images.push({ originalTag, fileName, size });
     }
 
-    // 匹配 Markdown: ![](image.png) 或 ![alt](image.png)
     const mdImgRegex = /!\[([^\]]*)\]\((.*?)\)/g;
     while ((match = mdImgRegex.exec(content)) !== null) {
       const originalTag = match[0];
       const fileName = match[2];
-      images.push({ originalTag, fileName });
+      if (fileName) {
+        images.push({ originalTag, fileName });
+      }
     }
 
     return images;
   }
 
+  /**
+   * 解析图片文件的完整路径
+   * @param fileName - 图片文件名
+   * @param sourceFile - 源文件
+   * @returns 解析后的完整路径
+   */
   private resolvePath(fileName: string, sourceFile: TFile): string {
-    const file = this.vault.getFiles().find((f) => f.name === fileName);
-    return file ? file.path : fileName;
+    const parentPath = sourceFile.parent?.path || '';
+    return normalizePath(parentPath + '/' + fileName);
   }
 
+  /**
+   * 将 CSS 样式内联到 HTML
+   * @param html - HTML 内容
+   * @returns 带内联样式的 HTML
+   */
   private async inlineStyles(html: string): Promise<string> {
     let css = "";
 
-    // 尝试加载自定义 CSS 文件
     if (this.settings.customCssFile) {
       try {
         const cssFile = this.vault.getAbstractFileByPath(this.settings.customCssFile);
         if (cssFile) {
           const cssContent = await this.vault.read(cssFile as TFile);
-          // 提取 CSS 代码块
           const cssMatch = cssContent.match(/```css\n([\s\S]*?)\n```/);
-          if (cssMatch) {
+          if (cssMatch && cssMatch[1]) {
             css = cssMatch[1];
           }
         }
@@ -189,9 +307,9 @@ export class MarkdownProcessor {
       }
     }
 
-    // 如果没有自定义 CSS，使用预设主题
     if (!css && this.settings.theme) {
-      css = THEMES[this.settings.theme] || THEMES.default;
+      const theme = this.settings.theme as ThemeType;
+      css = THEMES[theme] || THEMES.default;
     }
 
     return juice(html, { extraCss: css });
