@@ -291,13 +291,34 @@ export class MarkdownProcessor {
 
   /**
    * 解析图片文件的完整路径
-   * @param fileName - 图片文件名
+   * @param fileName - 图片文件名或相对路径
    * @param sourceFile - 源文件
    * @returns 解析后的完整路径
    */
   private resolvePath(fileName: string, sourceFile: TFile): string {
+    // 如果已经是绝对路径（以/开头），直接返回
+    if (fileName.startsWith('/')) {
+      return normalizePath(fileName.slice(1));
+    }
+    
     const parentPath = sourceFile.parent?.path || '';
-    return normalizePath(parentPath + '/' + fileName);
+    const fullPath = parentPath + '/' + fileName;
+    
+    // 手动处理相对路径（../ 和 ./）
+    const parts = fullPath.split('/').filter(p => p.length > 0);
+    const resolvedParts: string[] = [];
+    
+    for (const part of parts) {
+      if (part === '..') {
+        // 返回上一级目录
+        resolvedParts.pop();
+      } else if (part !== '.') {
+        // 忽略 ./，正常添加其他部分
+        resolvedParts.push(part);
+      }
+    }
+    
+    return resolvedParts.join('/');
   }
 
   /**

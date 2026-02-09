@@ -62,11 +62,25 @@ export class WechatPluginSettingTab extends PluginSettingTab {
         button
           .setButtonText("获取 IP")
           .onClick(async () => {
-            const ip = await this.plugin.api?.getCurrentIP();
-            if (ip) {
-              this.plugin.settings.currentIP = ip;
-              await this.plugin.saveSettings();
-              new Notice(`当前 IP: ${ip}`);
+            try {
+              // 使用 Obsidian 的 requestUrl 直接获取 IP
+              const { requestUrl } = require('obsidian');
+              const res = await requestUrl({ 
+                url: 'https://api.ipify.org?format=json', 
+                method: "GET" 
+              });
+              const ip = res.json.ip;
+              
+              if (ip) {
+                this.plugin.settings.currentIP = ip;
+                await this.plugin.saveSettings();
+                new Notice(`当前 IP: ${ip}`);
+              } else {
+                new Notice('获取 IP 失败，请手动输入');
+              }
+            } catch (error) {
+              console.error('Failed to get IP:', error);
+              new Notice('获取 IP 失败，请手动输入');
             }
           }),
       );
