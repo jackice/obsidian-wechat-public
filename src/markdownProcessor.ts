@@ -115,7 +115,7 @@ export class MarkdownProcessor {
     let html = md.render(content);
 
     // 5. 内联 CSS 样式
-    html = this.inlineStyles(html);
+    html = await this.inlineStyles(html);
 
     // 6. 上传封面（如果需要）
     let coverMediaId = null;
@@ -169,7 +169,7 @@ export class MarkdownProcessor {
     return file ? file.path : fileName;
   }
 
-  private inlineStyles(html: string): string {
+  private async inlineStyles(html: string): Promise<string> {
     let css = "";
 
     // 尝试加载自定义 CSS 文件
