@@ -1,6 +1,11 @@
 import imageCompression from 'browser-image-compression';
 import { WechatApi } from './wechatApi';
 
+const PROGRESS_STAGES = {
+  PROCESSING: "正在处理图片...",
+  UPLOADING: "正在上传图片..."
+} as const;
+
 export interface ImageInfo {
   originalTag: string;
   fileName: string;
@@ -108,7 +113,7 @@ export class ImageProcessor {
 
         completedCount++;
         if (onProgress) {
-          onProgress(completedCount, images.length, `正在处理图片: ${image.fileName}`);
+          onProgress(completedCount, images.length, `${PROGRESS_STAGES.UPLOADING} (${completedCount}/${images.length}): ${image.fileName}`);
         }
 
         return {

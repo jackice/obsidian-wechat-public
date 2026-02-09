@@ -1,5 +1,6 @@
 import { PluginSettingTab, App, Setting, Notice } from "obsidian";
 import WechatPlugin from "./main";
+import { ThemeType, isValidTheme } from "./markdownProcessor";
 
 export interface WeChatPluginSettings {
   appId: string;
@@ -7,7 +8,7 @@ export interface WeChatPluginSettings {
   currentIP: string;
   manualIP: string;
   useManualIP: boolean;
-  theme: string;
+  theme: ThemeType;
   customCssFile: string;
   defaultCoverMediaId: string;
   defaultCoverFile: string;
@@ -146,8 +147,10 @@ export class WechatPluginSettingTab extends PluginSettingTab {
           .addOption("literary", "文艺风格")
           .setValue(this.plugin.settings.theme)
           .onChange(async (value) => {
-            this.plugin.settings.theme = value;
-            await this.plugin.saveSettings();
+            if (isValidTheme(value)) {
+              this.plugin.settings.theme = value;
+              await this.plugin.saveSettings();
+            }
           }),
       );
 

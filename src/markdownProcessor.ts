@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import juice from 'juice';
-import { TFile, Vault, normalizePath } from 'obsidian';
+import { TFile, Vault, normalizePath, Notice } from 'obsidian';
 import { WechatApi } from './wechatApi';
 import { ImageProcessor, ImageInfo, ProcessedImage } from './imageProcessor';
 import { WeChatPluginSettings } from './settings';
@@ -8,6 +8,10 @@ import { WeChatPluginSettings } from './settings';
 export type ThemeType = 'default' | 'simple' | 'tech' | 'literary';
 
 export const THEME_NAMES: readonly ThemeType[] = ['default', 'simple', 'tech', 'literary'] as const;
+
+export function isValidTheme(theme: string): theme is ThemeType {
+  return (THEME_NAMES as readonly string[]).includes(theme);
+}
 
 const PROGRESS_STAGES = {
   READING_IMAGES: "正在读取图片文件...",
@@ -100,7 +104,7 @@ export class MarkdownProcessor {
     const images = this.extractImages(content);
     const fileBuffers = await this.readImageFiles(images, sourceFile, onProgress);
 
-    const { uploadedImages, firstImageBuffer, firstImageName } = await this.processImageContent(
+    const { uploadedImages, firstImageBuffer, firstImageName } = await this.uploadImagesIfNeeded(
       images,
       fileBuffers,
       uploadImages,
@@ -136,7 +140,10 @@ export class MarkdownProcessor {
       onProgress(0, images.length, PROGRESS_STAGES.READING_IMAGES);
     }
 
-    for (const image of images) {
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      if (!image) continue;
+
       const file = this.vault.getAbstractFileByPath(
         this.resolvePath(image.fileName, sourceFile),
       );
@@ -145,20 +152,24 @@ export class MarkdownProcessor {
         const buffer = await this.vault.readBinary(file);
         fileBuffers.set(image.fileName, buffer);
       }
+
+      if (onProgress) {
+        onProgress(i + 1, images.length, PROGRESS_STAGES.READING_IMAGES);
+      }
     }
 
     return fileBuffers;
   }
 
   /**
-   * 处理图片内容（上传或使用占位符）
+   * 上传图片（如果需要）
    * @param images - 图片信息列表
    * @param fileBuffers - 文件二进制数据映射
    * @param uploadImages - 是否上传图片
    * @param onProgress - 进度回调函数
    * @returns 包含已上传图片、第一张图片缓冲区和名称的对象
    */
-  private async processImageContent(
+  private async uploadImagesIfNeeded(
     images: ImageInfo[],
     fileBuffers: Map<string, ArrayBuffer>,
     uploadImages: boolean,
@@ -212,6 +223,7 @@ export class MarkdownProcessor {
    * @param firstImageName - 第一张图片的文件名
    * @param uploadImages - 是否上传图片
    * @returns 封面 Media ID 或 null
+   * @throws {MarkdownProcessorError} 如果上传失败
    */
   private async uploadCoverIfNeeded(
     firstImageBuffer: ArrayBuffer | null,
@@ -228,9 +240,13 @@ export class MarkdownProcessor {
         );
       } catch (e) {
         console.error("Cover upload failed", e);
-        if (this.settings.defaultCoverMediaId) {
-          coverMediaId = this.settings.defaultCoverMediaId;
-        }
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        new Notice(`封面图片上传失败: ${firstImageName}\n错误: ${errorMessage}`, 5000);
+        const error = e instanceof Error ? e : new Error(String(e));
+        throw new MarkdownProcessorError(
+          `封面图片上传失败: ${firstImageName}`,
+          error
+        );
       }
     }
 
@@ -308,8 +324,8 @@ export class MarkdownProcessor {
     }
 
     if (!css && this.settings.theme) {
-      const theme = this.settings.theme as ThemeType;
-      css = THEMES[theme] || THEMES.default;
+      const theme = isValidTheme(this.settings.theme) ? this.settings.theme : 'default';
+      css = THEMES[theme];
     }
 
     return juice(html, { extraCss: css });
